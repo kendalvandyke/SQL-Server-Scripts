@@ -145,7 +145,8 @@ Step 1: Get density of missing index columns (EQUALITY and INEQUALITY) using ind
 	(since columns in missing index recommendations are simply alpha sorted)
 - When there are multiple stats on a column use the average density of all stats on that column
 */
-DECLARE @object_id INT, @statement NVARCHAR(4000);
+DECLARE @object_id INT
+		, @statement NVARCHAR(4000);
 
 DECLARE curObject CURSOR LOCAL FAST_FORWARD FOR
 SELECT DISTINCT
@@ -276,10 +277,13 @@ cteMissingIndexCols2 AS (
 		   , mic.column_name
 		   , mic.column_usage
 		   , MIN(mic.has_stats) OVER (PARTITION BY mic.index_handle, mic.column_usage) AS column_group_has_stats
-		   , ROW_NUMBER() OVER (PARTITION BY mic.index_handle, mic.column_usage
-								ORDER BY sd.density_ordinal, mic.column_name
+		   , ROW_NUMBER() OVER (PARTITION BY mic.index_handle
+											 , mic.column_usage
+								ORDER BY sd.density_ordinal
+										 , mic.column_name
 						  ) AS density_ordinal_in_group
-		   , ROW_NUMBER() OVER (PARTITION BY mic.index_handle, mic.column_usage
+		   , ROW_NUMBER() OVER (PARTITION BY mic.index_handle
+											 , mic.column_usage
 								ORDER BY mic.column_name
 						  ) AS column_name_ordinal_in_group
 		   , CASE mic.column_usage
@@ -606,7 +610,8 @@ SELECT 'Missing - Index Group' AS [Result Type]
 								ELSE key_columns + N') INCLUDE (' + included_columns
 							END + N')' AS create_index_statement
 FROM #MissingIndexes
-ORDER BY eqcol_group_id, index_improvement_measure DESC;
+ORDER BY eqcol_group_id
+		 , index_improvement_measure DESC;
 -- #endregion
 
 
@@ -621,11 +626,17 @@ ORDER BY eqcol_group_id, index_improvement_measure DESC;
 -- #region EqualityColumnGroup
 WITH
 cteIncludedCols AS (
-	SELECT mi.object_id, mi.key_columns, ISNULL(mi.equality_columns, N'') AS equality_columns, cols.column_name
+	SELECT mi.object_id
+		   , mi.key_columns
+		   , ISNULL(mi.equality_columns, N'') AS equality_columns
+		   , cols.column_name
 	FROM #MissingIndexes AS mi
 		INNER JOIN #MissingIndexColumns AS cols ON mi.index_handle = cols.index_handle
 	WHERE cols.column_usage = 'INCLUDE'
-	GROUP BY mi.object_id, mi.key_columns, ISNULL(mi.equality_columns, N''), cols.column_name
+	GROUP BY mi.object_id
+			 , mi.key_columns
+			 , ISNULL(mi.equality_columns, N'')
+			 , cols.column_name
 )
 ,
 cteDistinctIncludedCols AS (
@@ -744,11 +755,15 @@ ORDER BY eqcol_group_id ASC;
 -- #region KeyGolumnGroup
 WITH
 cteIncludedCols AS (
-	SELECT mi.object_id, mi.key_columns, cols.column_name
+	SELECT mi.object_id
+		   , mi.key_columns
+		   , cols.column_name
 	FROM #MissingIndexes AS mi
 		INNER JOIN #MissingIndexColumns AS cols ON mi.index_handle = cols.index_handle
 	WHERE cols.column_usage = 'INCLUDE'
-	GROUP BY mi.object_id, mi.key_columns, cols.column_name
+	GROUP BY mi.object_id
+			 , mi.key_columns
+			 , cols.column_name
 )
 ,
 cteDistinctIncludedCols AS (
@@ -896,17 +911,24 @@ WHERE INDEXPROPERTY(o.object_id, i.name, 'IsStatistics') = 0
 -- Populate #AllIndexes using Missing Index Key Groups so we can apply the overlapping/overlapped logic
 WITH
 cteDistinctIncludedCols AS (
-	SELECT mi.object_id, mi.key_columns, cols.column_name
+	SELECT mi.object_id
+		   , mi.key_columns
+		   , cols.column_name
 	FROM #MissingIndexes AS mi
 		INNER JOIN #MissingIndexColumns AS cols ON mi.index_handle = cols.index_handle
 	WHERE cols.column_usage = 'INCLUDE'
-	GROUP BY mi.object_id, mi.key_columns, cols.column_name
+	GROUP BY mi.object_id
+			 , mi.key_columns
+			 , cols.column_name
 )
 ,
 cteActualIndex AS (
-	SELECT SchemaId, ObjectId, MAX(IndexId) AS MaxIndexId
+	SELECT SchemaId
+		   , ObjectId
+		   , MAX(IndexId) AS MaxIndexId
 	FROM #AllIndexes
-	GROUP BY SchemaId, ObjectId
+	GROUP BY SchemaId
+			 , ObjectId
 )
 ,
 cteMissingIndex AS (
@@ -928,13 +950,29 @@ cteMissingIndex AS (
 ,
 cteMissingIndexCols AS (
 	SELECT DISTINCT
-		   mi.SchemaId, mi.ObjectId, mi.IndexId, mi.KeyColGroup, mi.SchemaName, mi.TableName, mic.column_name AS ColumnName, mic.column_ordinal AS key_ordinal, 0 AS is_included_column
+		   mi.SchemaId
+		   , mi.ObjectId
+		   , mi.IndexId
+		   , mi.KeyColGroup
+		   , mi.SchemaName
+		   , mi.TableName
+		   , mic.column_name AS ColumnName
+		   , mic.column_ordinal AS key_ordinal
+		   , 0 AS is_included_column
 	FROM cteMissingIndex AS mi
 		INNER JOIN #MissingIndexColumns AS mic ON mi.index_handle = mic.index_handle
 	WHERE mic.column_usage IN ( 'EQUALITY', 'INEQUALITY' )
 	UNION ALL
 	SELECT DISTINCT
-		   mi.SchemaId, mi.ObjectId, mi.IndexId, mi.KeyColGroup, mi.SchemaName, mi.TableName, mic.column_name AS ColumnName, 0 AS key_ordinal, 1 AS is_included_column
+		   mi.SchemaId
+		   , mi.ObjectId
+		   , mi.IndexId
+		   , mi.KeyColGroup
+		   , mi.SchemaName
+		   , mi.TableName
+		   , mic.column_name AS ColumnName
+		   , 0 AS key_ordinal
+		   , 1 AS is_included_column
 	FROM cteMissingIndex AS mi
 		INNER JOIN cteDistinctIncludedCols AS mic ON mi.ObjectId = mic.object_id
 													 AND mi.key_columns = mic.key_columns
@@ -965,12 +1003,16 @@ INSERT INTO #AllIndexes
 SELECT SchemaId
 	   , ObjectId
 	   , IndexId
-	   , ROW_NUMBER() OVER (PARTITION BY SchemaId, ObjectId, IndexId
-							ORDER BY is_included_column, key_ordinal, ColumnName
+	   , ROW_NUMBER() OVER (PARTITION BY SchemaId
+										 , ObjectId
+										 , IndexId
+							ORDER BY is_included_column
+									 , key_ordinal
+									 , ColumnName
 					  ) AS IndexColumnId
 	   , SchemaName
 	   , TableName
-	   , N'IX_' + TableName + N'_KeyColGroup_' + FORMAT(KeyColGroup, 'D3') + N'_Missing_' + FORMAT(IndexId, 'D') AS IndexName
+	   , N'IX_' + TableName + N'_KeyColGroup_' + LEFT(N'00' + CONVERT(NVARCHAR(3), KeyColGroup), 3) + N'_Missing_' + LEFT(N'00' + CONVERT(NVARCHAR(3), IndexId), 3) AS IndexName
 	   , ColumnName
 	   , key_ordinal
 	   , 1 AS partition_ordinal
@@ -985,9 +1027,9 @@ SELECT SchemaId
 	   , COUNT(*) OVER (PARTITION BY SchemaId, ObjectId, IndexId) AS TotalColumnCount
 	   , 1 AS IsMissingIndex
 FROM cteMissingIndexCols
-ORDER BY SchemaName, TableName, IndexId;
-
-
+ORDER BY SchemaName
+		 , TableName
+		 , IndexId;
 
 
 
@@ -1001,20 +1043,49 @@ WITH FULLSCAN;
 
 WITH
 cteIndexes AS (
-	SELECT SchemaId, ObjectId, IndexId, SchemaName, TableName, IndexName, is_disabled, is_unique, IsMissingIndex, MaxPartitionOrdinal
+	SELECT SchemaId
+		   , ObjectId
+		   , IndexId
+		   , SchemaName
+		   , TableName
+		   , IndexName
+		   , is_disabled
+		   , is_unique
+		   , IsMissingIndex
+		   , MaxPartitionOrdinal
 	FROM #AllIndexes
-	GROUP BY SchemaId, ObjectId, IndexId, SchemaName, SchemaName, TableName, IndexName, is_disabled, is_unique, IsMissingIndex, MaxPartitionOrdinal
+	GROUP BY SchemaId
+			 , ObjectId
+			 , IndexId
+			 , SchemaName
+			 , SchemaName
+			 , TableName
+			 , IndexName
+			 , is_disabled
+			 , is_unique
+			 , IsMissingIndex
+			 , MaxPartitionOrdinal
 )
 ,
 ctePartitionStatsSummary AS (
-	SELECT object_id AS ObjectId, index_id AS IndexId, SUM(row_count) AS [RowCount], SUM(used_page_count) AS UsedPageCount, SUM(reserved_page_count) AS ReservedPageCount
+	SELECT object_id AS ObjectId
+		   , index_id AS IndexId
+		   , SUM(row_count) AS [RowCount]
+		   , SUM(used_page_count) AS UsedPageCount
+		   , SUM(reserved_page_count) AS ReservedPageCount
 	FROM sys.dm_db_partition_stats
-	GROUP BY object_id, index_id
+	GROUP BY object_id
+			 , index_id
 	UNION ALL
-	SELECT ObjectId, IndexId, 0 AS [RowCount], 0 AS UsedPageCount, 0 AS ReservedPageCount
+	SELECT ObjectId
+		   , IndexId
+		   , 0 AS [RowCount]
+		   , 0 AS UsedPageCount
+		   , 0 AS ReservedPageCount
 	FROM #AllIndexes
 	WHERE IsMissingIndex = 1
-	GROUP BY ObjectId, IndexId
+	GROUP BY ObjectId
+			 , IndexId
 )
 /* 
 		Candidates for overlapping/overlapped are on the same schema and table, not the same index, and the last key column of the indexes are the same 
@@ -1079,7 +1150,11 @@ cteOverlappingIndexes AS (
 		   , iOverlapping.IndexId AS OverlappingIndexId
 		   , iOverlapped.IndexId AS OverlappedIndexId
 		   , iOverlapped.MaxKeyOrdinal AS OverlappedMaxKeyOrdinal
-		   , COUNT(iOverlapping.key_ordinal) OVER (PARTITION BY iOverlapping.SchemaId, iOverlapping.ObjectId, iOverlapping.IndexId, iOverlapped.IndexId) AS OverlappingKeyOrdinalCount
+		   , COUNT(iOverlapping.key_ordinal) OVER (PARTITION BY iOverlapping.SchemaId
+																, iOverlapping.ObjectId
+																, iOverlapping.IndexId
+																, iOverlapped.IndexId
+											 ) AS OverlappingKeyOrdinalCount
 	FROM #AllIndexes AS iOverlapping
 		INNER JOIN cteOverlapIndexCandidate ON iOverlapping.SchemaId = cteOverlapIndexCandidate.OverlappingSchemaId
 											   AND iOverlapping.ObjectId = cteOverlapIndexCandidate.OverlappingObjectId
@@ -1237,7 +1312,10 @@ FROM cteIndexes AS iOverlapping
 	FOR XML PATH('')
 ) AS OverlappedIncludeColumns(ColumnNames)
 WHERE cteOverlappingIndexes.OverlappingKeyOrdinalCount = cteOverlappingIndexes.OverlappedMaxKeyOrdinal
-ORDER BY iOverlapping.SchemaName, iOverlapping.TableName, iOverlapping.IndexName, iOverlapped.IndexName;
+ORDER BY iOverlapping.SchemaName
+		 , iOverlapping.TableName
+		 , iOverlapping.IndexName
+		 , iOverlapped.IndexName;
 
 
 
